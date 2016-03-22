@@ -55,7 +55,6 @@ static int dicom_parse_syntax(DICOMContext *d)
     case 199:
         d->compression = DICOM_COMPRESSION_DEFLATE;
         return AVERROR_PATCHWELCOME;
-//        break;
     case 2:
         d->endian = DICOM_ENDIAN_BE;
         break;
@@ -82,7 +81,7 @@ static int dicom_read_transfer_syntax(AVFormatContext *s, DICOMContext *d)
         return AVERROR(EINVAL);
     d->syntax = dicom_transfer_syntax[i];
 
-    av_log(s, AV_LOG_INFO, "TransferSyntax: %d %s\n", d->syntax.type, d->syntax.name);
+    av_log(s, AV_LOG_INFO, "Transfer syntax: %s\n", d->syntax.name);
     return 0;
 }
 
@@ -94,10 +93,9 @@ static uint32_t dicom_read_element_length(AVFormatContext *s, DICOMContext *d)
 
         if((memcmp(vr, "OB", 2) && memcmp(vr, "OW", 2) &&
             memcmp(vr, "OF", 2) && memcmp(vr, "SQ", 2) &&
-            memcmp(vr, "UT", 2) && memcmp(vr, "UN", 2))){
-
+            memcmp(vr, "UT", 2) && memcmp(vr, "UN", 2)))
             return dicom_r16(s->pb, d);
-        }
+
         avio_skip(s->pb, 2);
     }
     return dicom_r32(s->pb, d);
@@ -106,18 +104,37 @@ static uint32_t dicom_read_element_length(AVFormatContext *s, DICOMContext *d)
 static uint64_t dicom_nested_data(AVFormatContext *s, DICOMContext *d)
 {
     uint16_t group, element;
+    uint32_t il;
 
     while(!avio_feof(s->pb))
     {
         group = dicom_r16(s->pb, d);
         element = dicom_r16(s->pb, d);
 
-        if(group == 0xFFFE && element == 0xE0DD)
-            return avio_skip(s->pb, 4);
+        if(group == 0xFFFE && element == 0xE000){
+            il = dicom_r32(s->pb, d);
 
-        dicom_get_next_element(s, d);
+            if(il == 0xffffffff){
+                group = dicom_r16(s->pb, d);
+                element = dicom_r16(s->pb, d);
+
+                while(!(group == 0xFFFE && element == 0xE00D)){
+                    dicom_get_next_element(s, d);
+
+                    group = dicom_r16(s->pb, d);
+                    element = dicom_r16(s->pb, d);
+                }
+                avio_skip(s->pb, 4);
+
+            } else
+                avio_skip(s->pb, il);
+
+        }else if(group == 0xFFFE && element == 0xE0DD)
+            return avio_skip(s->pb, 4);
+        else
+            break;
     }
-    return 0;
+    return 0; //zero indicates error
 }
 
 static uint64_t dicom_get_next_element(AVFormatContext *s, DICOMContext *d)
@@ -131,7 +148,7 @@ static uint64_t dicom_get_next_element(AVFormatContext *s, DICOMContext *d)
 
 static int dicom_read_metadata(AVFormatContext *s, DICOMContext *d, uint16_t element)
 {
-    char data[1024]; // ST max size
+    char data[DICOM_VR_ST_MAXSIZE];
     uint32_t vl = dicom_read_element_length(s, d);
     switch(element){
     case 0x0002:
@@ -155,10 +172,10 @@ static int dicom_read_metadata(AVFormatContext *s, DICOMContext *d, uint16_t ele
         av_log(s, AV_LOG_INFO, "Number of Frames: %s\n", data);
         break;
     case 0x0009:
-        av_log(s, AV_LOG_INFO, "Frame Increment Pointer: (%d),(%d)\n", dicom_r16(s->pb, d), dicom_r16(s->pb, d));
+        av_log(s, AV_LOG_INFO, "Frame Increment Pointer: (%04x,%04x)\n", dicom_r16(s->pb, d), dicom_r16(s->pb, d));
         break;
     case 0x000A:
-        av_log(s, AV_LOG_INFO, "Frame Dimension Pointer: (%d),(%d)\n", dicom_r16(s->pb, d), dicom_r16(s->pb, d));
+        av_log(s, AV_LOG_INFO, "Frame Dimension Pointer: (%04x,%04x)\n", dicom_r16(s->pb, d), dicom_r16(s->pb, d));
         break;
     case 0x0010:
         av_log(s, AV_LOG_INFO, "Rows: %d\n", dicom_r16(s->pb, d));
@@ -225,7 +242,7 @@ static int dicom_read_metadata(AVFormatContext *s, DICOMContext *d, uint16_t ele
         av_log(s, AV_LOG_INFO, "Compression Sequence: %s\n", data);
         break;
     case 0x0066:
-        av_log(s, AV_LOG_INFO, "Compression Step Pointers: (%d),(%d)\n", dicom_r16(s->pb, d), dicom_r16(s->pb, d));
+        av_log(s, AV_LOG_INFO, "Compression Step Pointers: (%04x,%04x)\n", dicom_r16(s->pb, d), dicom_r16(s->pb, d));
         break;
     case 0x0068:
         av_log(s, AV_LOG_INFO, "Repeat Interval: %d\n", dicom_r16(s->pb, d));
@@ -345,7 +362,7 @@ static int dicom_read_metadata(AVFormatContext *s, DICOMContext *d, uint16_t ele
         av_log(s, AV_LOG_INFO, "Sequence of Compressed Data: %s\n", data);
         break;
     case 0x0404:
-        av_log(s, AV_LOG_INFO, "Details of Coefficients: (%d),(%d)\n", dicom_r16(s->pb, d), dicom_r16(s->pb, d));
+        av_log(s, AV_LOG_INFO, "Details of Coefficients: (%04x,%04x)\n", dicom_r16(s->pb, d), dicom_r16(s->pb, d));
         break;
     case 0x0700:
         avio_read(s->pb, data, vl);
@@ -356,7 +373,7 @@ static int dicom_read_metadata(AVFormatContext *s, DICOMContext *d, uint16_t ele
         av_log(s, AV_LOG_INFO, "Data Block Description: %s\n", data);
         break;
     case 0x0702:
-        av_log(s, AV_LOG_INFO, "Data Block: (%d),(%d)\n", dicom_r16(s->pb, d), dicom_r16(s->pb, d));
+        av_log(s, AV_LOG_INFO, "Data Block: (%04x,%04x)\n", dicom_r16(s->pb, d), dicom_r16(s->pb, d));
         break;
     case 0x0710:
         av_log(s, AV_LOG_INFO, "Normalization Factor Format: %d\n", dicom_r16(s->pb, d));
@@ -365,7 +382,7 @@ static int dicom_read_metadata(AVFormatContext *s, DICOMContext *d, uint16_t ele
         av_log(s, AV_LOG_INFO, "Zonal Map Number Format: %d\n", dicom_r16(s->pb, d));
         break;
     case 0x0721:
-        av_log(s, AV_LOG_INFO, "Zonal Map Location: (%d),(%d)\n", dicom_r16(s->pb, d), dicom_r16(s->pb, d));
+        av_log(s, AV_LOG_INFO, "Zonal Map Location: (%04d,%04d)\n", dicom_r16(s->pb, d), dicom_r16(s->pb, d));
         break;
     case 0x0722:
         av_log(s, AV_LOG_INFO, "Zonal Map Format: %d\n", dicom_r16(s->pb, d));
@@ -746,7 +763,7 @@ static int dicom_read_header(AVFormatContext *s)
 
     while(!avio_feof(s->pb) && group == 0x0002){
 
-        av_log(s, AV_LOG_TRACE, "%x %x\n", group, element);
+        av_log(s, AV_LOG_TRACE, "Tag: (%04x,%04x)\n", group, element);
 
         if(element == 0x0010){
             if(err = dicom_read_transfer_syntax(s, d))
@@ -760,14 +777,14 @@ static int dicom_read_header(AVFormatContext *s)
     }
 
     dicom_parse_syntax(d);
-    if(!d->vr_explicit){
+    if(d->endian != DICOM_ENDIAN_LE){
         group = (group << 8) & 0xff00 + (group >> 8);
         element = (element << 8) & 0xff00 + (element >> 8);
     }
 
     while(!avio_feof(s->pb))
     {
-        av_log(s, AV_LOG_TRACE, "%x %x\n", group, element);
+        av_log(s, AV_LOG_TRACE, "Tag: (%04x,%04x)\n", group, element);
 
         if(group == 0x0028){
             if(err = dicom_read_metadata(s, d, element))
@@ -788,7 +805,7 @@ static int dicom_read_header(AVFormatContext *s)
 
 static int dicom_read_packet(AVFormatContext *s, AVPacket *pkt)
 {
-    return -1;
+    return AVERROR_PATCHWELCOME;
 }
 
 AVInputFormat ff_dicom_demuxer = {

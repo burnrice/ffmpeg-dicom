@@ -30,7 +30,7 @@
 
 #define DICOM_TRANSFER_SYNTAX_MAXSIZE 24 // must be even
 #define DICOM_CODEC_MAXSIZE 5
-#define DICOM_VR_CS_MAXSIZE 16
+#define DICOM_VR_ST_MAXSIZE 1024
 
 enum {
     DICOM_ENDIAN_LE = 0,
@@ -50,7 +50,7 @@ enum {
 
 typedef struct DICOMTransferSyntax {
     char name[DICOM_TRANSFER_SYNTAX_MAXSIZE + 1];
-    int type;
+    uint16_t type;
     char codec[DICOM_CODEC_MAXSIZE + 1];
 } DICOMTransferSyntax;
 
